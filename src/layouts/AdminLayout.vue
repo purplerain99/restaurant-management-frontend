@@ -47,7 +47,7 @@ const handleLogout = async () => {
 onMounted(async () => {
   console.log(notification.subscribe());
   console.log(auth.isAdmin);
-
+  auth.me;
   await notification.subscribe();
 });
 
@@ -140,13 +140,13 @@ onBeforeUnmount(() => {
           <div class="flex items-center gap-3 border-l border-slate-200 pl-3">
             <div class="hidden text-right sm:block">
               <p class="text-xs font-bold text-slate-800">
-                {{ auth.user.user?.name || "User Account" }}
+                {{ auth.user?.name ? auth.user?.name : "User Account" }}
               </p>
 
               <span
                 class="inline-block rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-600"
               >
-                {{ auth.user.user?.role || "Staff" }}
+                {{ auth.user?.role ? auth.user?.role : "Staff" }}
               </span>
             </div>
 

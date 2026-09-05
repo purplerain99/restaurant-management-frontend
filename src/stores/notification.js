@@ -1,3 +1,4 @@
+
 import { ref, computed } from "vue";
 import { defineStore } from "pinia";
 
@@ -133,9 +134,7 @@ export const useNotificationStore = defineStore(
             | Role Check
             |--------------------------------------------------------------------------
             */
-            const role = auth.user.user?.role;
-            // console.log(role, 'this is role');
-
+            const role = auth.user.user?.role ? auth.user.user?.role : auth.user?.role;
 
             console.log(
                 "👤 Authenticated user:",

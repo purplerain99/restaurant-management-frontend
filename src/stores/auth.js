@@ -27,11 +27,11 @@ export const useAuthStore = defineStore("auth", () => {
     const isAdmin = computed(() => {
         console.log(user.value.user?.role, "this is user role");
 
-        return user.value.user?.role === "admin";
+        return user.value.user?.role ? user.value.user?.role : user.value?.role === "admin";
     });
 
     const isStaff = computed(() => {
-        return user.value.user?.role === "staff";
+        return user.value.user?.role ? user.value.user?.role : user.value?.role === "staff";
     });
 
     /*

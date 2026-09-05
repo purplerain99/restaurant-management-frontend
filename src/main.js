@@ -1,19 +1,28 @@
-import './style.css'
+import { createApp } from "vue";
+import { createPinia } from "pinia";
 
-import { createApp } from 'vue'
+import App from "./App.vue";
+import router from "./router";
 
-import { createPinia } from 'pinia'
+import { useAuthStore } from "@/stores/auth";
 
-import './services/echo'
+import "./style.css";
 
-import App from './App.vue'
+const app = createApp(App);
 
-import router from './router'
+const pinia = createPinia();
 
-const app = createApp(App)
+app.use(pinia);
 
-app.use(createPinia())
+const auth = useAuthStore(pinia);
 
-app.use(router)
+// Auth restore အရင်လုပ်
+await auth.restoreAuth;
 
-app.mount('#app')
+// Router
+app.use(router);
+
+await router.isReady();
+
+// App mount
+app.mount("#app");

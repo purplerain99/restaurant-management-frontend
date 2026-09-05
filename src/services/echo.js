@@ -46,7 +46,7 @@ const echo = new Echo({
         headers: {
             Accept: "application/json",
             Authorization:
-                `Bearer ${localStorage.getItem("auth_token") ||
+                `Bearer ${localStorage.getItem("token") ||
                 localStorage.getItem("token") ||
                 ""
                 }`,
