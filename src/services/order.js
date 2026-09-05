@@ -41,21 +41,16 @@ export const trackOrder =
     }
 
 
-export const getOrders =
-    async (
-        params = {}
-    ) => {
 
-        const response =
-            await api.get(
-                '/orders',
-                {
-                    params,
-                }
-            )
 
-        return response.data
-    }
+
+export const getOrders = (params = {}) => {
+    return api.get("/orders", {
+        params,
+    });
+};
+
+
 
 
 export const updateOrderStatus =
@@ -75,18 +70,11 @@ export const updateOrderStatus =
         return response.data
     }
 
-    export const getKitchenOrders =
-    async () => {
-
-        const response =
-            await api.get(
-                '/orders',
-                {
-                    params: {
-                        kitchen: true,
-                    },
-                }
-            )
-
-        return response.data
-    }
+export const getKitchenOrders = (params = {}) => {
+    return api.get("/orders", {
+        params: {
+            ...params,
+            kitchen: true,
+        },
+    });
+};

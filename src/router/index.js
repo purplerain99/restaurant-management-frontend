@@ -211,14 +211,16 @@ router.beforeEach(async (to) => {
         | Admin only
         |--------------------------------------------------------------------------
         */
-        if (
-            to.meta.adminOnly &&
-            auth.user.user?.role !== "admin"
-        ) {
+        const userRole = auth.user?.user?.role ?? auth.user?.role ?? "";
+
+        // Extract the role cleanly handling nested structures, defaulting to empty string
+
+        if (to.meta.adminOnly && userRole !== "admin") {
             return {
-                name: "admin.orders",
+                name: "admin.orders", // Redirect non-admins away from admin routes
             };
         }
+
     }
 
     return true;

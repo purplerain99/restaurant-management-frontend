@@ -1,14 +1,49 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { getOrders, updateOrderStatus } from "../../services/order";
 import echo from "@/services/echo";
 
+/*
+|--------------------------------------------------------------------------
+| Orders
+|--------------------------------------------------------------------------
+*/
 const orders = ref([]);
 const loading = ref(true);
 const errorMessage = ref("");
+
+/*
+|--------------------------------------------------------------------------
+| Filters
+|--------------------------------------------------------------------------
+*/
 const selectedStatus = ref("");
 const search = ref("");
+const dateFrom = ref("");
+const dateTo = ref("");
 
+/*
+|--------------------------------------------------------------------------
+| Pagination
+|--------------------------------------------------------------------------
+*/
+const currentPage = ref(1);
+const perPage = ref(15);
+
+const pagination = ref({
+  current_page: 1,
+  last_page: 1,
+  per_page: 15,
+  total: 0,
+  from: 0,
+  to: 0,
+});
+
+/*
+|--------------------------------------------------------------------------
+| Status
+|--------------------------------------------------------------------------
+*/
 const statusList = [
   { value: "pending", label: "အသစ်" },
   { value: "confirmed", label: "အတည်ပြုပြီး" },
@@ -52,24 +87,128 @@ const nextStatuses = (status) => {
   );
 };
 
+/*
+|--------------------------------------------------------------------------
+| Pagination Helpers
+|--------------------------------------------------------------------------
+*/
+const pageNumbers = computed(() => {
+  const lastPage = pagination.value.last_page;
+  const current = pagination.value.current_page;
+  const pages = [];
+
+  let start = Math.max(1, current - 2);
+  let end = Math.min(lastPage, current + 2);
+
+  if (end - start < 4) {
+    if (start === 1) {
+      end = Math.min(5, lastPage);
+    }
+    if (end === lastPage) {
+      start = Math.max(1, lastPage - 4);
+    }
+  }
+
+  for (let page = start; page <= end; page++) {
+    pages.push(page);
+  }
+
+  return pages;
+});
+
+/*
+|--------------------------------------------------------------------------
+| Load Orders
+|--------------------------------------------------------------------------
+*/
 const loadOrders = async () => {
   loading.value = true;
   errorMessage.value = "";
 
   try {
     const response = await getOrders({
+      page: currentPage.value,
+      per_page: perPage.value,
       status: selectedStatus.value || undefined,
-      search: search.value || undefined,
+      search: search.value.trim() || undefined,
+      date_from: dateFrom.value || undefined,
+      date_to: dateTo.value || undefined,
     });
 
-    orders.value = response.data.data ?? [];
+    const data = response.data?.data;
+
+    orders.value = data?.items ?? [];
+    console.log(orders.value, "Order Admin Data");
+
+    pagination.value = data?.pagination ?? {
+      current_page: 1,
+      last_page: 1,
+      per_page: perPage.value,
+      total: 0,
+      from: 0,
+      to: 0,
+    };
   } catch (error) {
+    console.error("ORDERS ERROR:", error);
     errorMessage.value = error.response?.data?.message || "Orders ရယူ၍မရပါ။";
   } finally {
     loading.value = false;
   }
 };
 
+/*
+|--------------------------------------------------------------------------
+| Search & Clear Filters
+|--------------------------------------------------------------------------
+*/
+const applySearch = () => {
+  currentPage.value = 1;
+  loadOrders();
+};
+
+const clearFilters = () => {
+  search.value = "";
+  selectedStatus.value = "";
+  dateFrom.value = "";
+  dateTo.value = "";
+  currentPage.value = 1;
+  loadOrders();
+};
+
+const dateError = computed(() => {
+  if (dateFrom.value && dateTo.value && dateFrom.value > dateTo.value) {
+    return "From Date သည် To Date ထက် နောက်မကျရပါ။";
+  }
+  return "";
+});
+
+/*
+|--------------------------------------------------------------------------
+| Pagination Methods
+|--------------------------------------------------------------------------
+*/
+const goToPage = (page) => {
+  if (
+    page < 1 ||
+    page > pagination.value.last_page ||
+    page === pagination.value.current_page
+  ) {
+    return;
+  }
+  currentPage.value = page;
+  loadOrders();
+};
+
+const changePerPage = () => {
+  currentPage.value = 1;
+  loadOrders();
+};
+
+/*
+|--------------------------------------------------------------------------
+| Change Status
+|--------------------------------------------------------------------------
+*/
 const changeStatus = async (order, status) => {
   const confirmed = window.confirm(
     `${order.order_number} ကို ${statusLabel(
@@ -77,57 +216,73 @@ const changeStatus = async (order, status) => {
     )} သို့ ပြောင်းမှာသေချာပါသလား?`
   );
 
-  if (!confirmed) {
-    return;
-  }
+  if (!confirmed) return;
 
   try {
     const response = await updateOrderStatus(order.id, status);
-    const updatedOrder = response.data.order;
-    const updatedOrderId = updatedOrder.id;
+    const updatedOrder = response.data?.data ?? response.data?.order;
 
-    const index = orders.value.findIndex((item) => item.id === updatedOrderId);
+    if (!updatedOrder) {
+      await loadOrders();
+      return;
+    }
 
+    const index = orders.value.findIndex((item) => item.id === updatedOrder.id);
     if (index !== -1) {
       orders.value[index] = updatedOrder;
     }
   } catch (error) {
+    console.error("STATUS UPDATE ERROR:", error);
     errorMessage.value =
       error.response?.data?.message || "Status ပြောင်း၍မရပါ။";
   }
 };
 
-const handleRealtimeStatus = (event) => {
-  const updatedOrder = event.order;
+/*
+|--------------------------------------------------------------------------
+| Realtime Handles
+|--------------------------------------------------------------------------
+*/
+const handleNewOrder = (event) => {
+  const order = event?.order;
+  if (!order || orders.value.some((item) => item.id === order.id)) return;
 
+  const matchesStatus =
+    !selectedStatus.value || selectedStatus.value === order.status;
+  const orderDate = order.created_at ? new Date(order.created_at) : null;
+  const fromDate = dateFrom.value
+    ? new Date(`${dateFrom.value}T00:00:00`)
+    : null;
+  const toDate = dateTo.value ? new Date(`${dateTo.value}T23:59:59`) : null;
+
+  const matchesFromDate = !fromDate || !orderDate || orderDate >= fromDate;
+  const matchesToDate = !toDate || !orderDate || orderDate <= toDate;
+
+  const keyword = search.value.trim().toLowerCase();
+  const matchesSearch =
+    !keyword ||
+    order.order_number?.toLowerCase().includes(keyword) ||
+    order.guest_name?.toLowerCase().includes(keyword) ||
+    order.guest_phone?.toLowerCase().includes(keyword) ||
+    order.restaurant_table?.name?.toLowerCase().includes(keyword);
+
+  if (!matchesStatus || !matchesFromDate || !matchesToDate || !matchesSearch)
+    return;
+
+  orders.value.unshift(order);
+  if (orders.value.length > perPage.value) {
+    orders.value.pop();
+  }
+  pagination.value.total += 1;
+};
+
+const handleRealtimeStatus = (event) => {
+  const updatedOrder = event?.order;
   if (!updatedOrder) return;
 
   const index = orders.value.findIndex((item) => item.id === updatedOrder.id);
-
   if (index !== -1) {
-    orders.value[index] = {
-      ...orders.value[index],
-      ...updatedOrder,
-    };
-  } else {
-    if (!selectedStatus.value || selectedStatus.value === updatedOrder.status) {
-      orders.value.unshift(updatedOrder);
-    }
-  }
-};
-
-const handleNewOrder = (event) => {
-  const order = event.order;
-
-  if (!order) {
-    console.warn("Realtime order payload မရှိပါ။", event);
-    return;
-  }
-
-  if (!orders.value.some((item) => item.id === order.id)) {
-    if (!selectedStatus.value || selectedStatus.value === order.status) {
-      orders.value.unshift(order);
-    }
+    orders.value[index] = { ...orders.value[index], ...updatedOrder };
   }
 };
 
@@ -135,14 +290,13 @@ let channel = null;
 
 onMounted(async () => {
   await loadOrders();
-
   channel = echo.private("restaurant.orders");
   channel.listen(".order.created", handleNewOrder);
   channel.listen(".order.status.updated", handleRealtimeStatus);
 });
 
 onBeforeUnmount(() => {
-  echo.leave("restaurant.orders");
+  echo.leave("private-restaurant.orders");
   channel = null;
 });
 </script>
@@ -196,70 +350,171 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
-    <!-- Filters -->
+    <!-- Filters Section -->
     <div
-      class="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-900/5 backdrop-blur-xl"
+      class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-900/5 transition-all"
     >
-      <div class="grid gap-3 md:grid-cols-2">
-        <div class="relative">
-          <div
-            class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5"
-          >
-            <svg
-              class="h-4 w-4 text-slate-400"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke-width="2"
-              stroke="currentColor"
+      <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4 items-end">
+        <!-- Search -->
+        <div class="">
+          <label class="mb-1.5 block text-xs font-semibold text-slate-600">
+            Search
+          </label>
+          <div class="relative">
+            <div
+              class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3.5"
             >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"
-              />
-            </svg>
+              <svg
+                class="h-4 w-4 text-slate-400"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke-width="2"
+                stroke="currentColor"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"
+                />
+              </svg>
+            </div>
+            <input
+              v-model="search"
+              @keyup.enter="applySearch"
+              type="search"
+              placeholder="Order No. / Table / Guest / Phone..."
+              class="w-full rounded-xl border-0 py-2.5 pl-10 pr-4 text-sm text-slate-900 ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-slate-900 transition-all"
+            />
           </div>
+        </div>
+
+        <!-- Status Filter -->
+        <div>
+          <label class="mb-1.5 block text-xs font-semibold text-slate-600">
+            Status
+          </label>
+          <div class="relative">
+            <select
+              v-model="selectedStatus"
+              @change="applySearch"
+              class="w-full appearance-none rounded-xl border-0 bg-white py-2.5 pl-4 pr-10 text-sm text-slate-900 ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-slate-900 transition-all"
+            >
+              <option value="">Status အားလုံး</option>
+              <option
+                v-for="status in statusList"
+                :key="status.value"
+                :value="status.value"
+              >
+                {{ status.label }}
+              </option>
+            </select>
+            <div
+              class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3.5"
+            >
+              <svg
+                class="h-4 w-4 text-slate-400"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke-width="2"
+                stroke="currentColor"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="m19.5 8.25-7.5 7.5-7.5-7.5"
+                />
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        <!-- From Date -->
+        <div>
+          <label class="mb-1.5 block text-xs font-semibold text-slate-600">
+            From Date
+          </label>
           <input
-            v-model="search"
-            @keyup.enter="loadOrders"
-            type="search"
-            placeholder="Order No. / Table / Guest ရှာမည်..."
-            class="w-full rounded-xl border-0 py-2.5 pl-10 pr-4 text-sm text-slate-900 ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-slate-900 transition-all"
+            v-model="dateFrom"
+            type="date"
+            :max="dateTo || undefined"
+            @change="applySearch"
+            class="w-full rounded-xl border-0 bg-white px-4 py-2.5 text-sm text-slate-900 ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-slate-900 transition-all"
           />
         </div>
 
-        <div class="relative">
+        <!-- To Date -->
+        <div>
+          <label class="mb-1.5 block text-xs font-semibold text-slate-600">
+            To Date
+          </label>
+          <input
+            v-model="dateTo"
+            type="date"
+            :min="dateFrom || undefined"
+            @change="applySearch"
+            class="w-full rounded-xl border-0 bg-white px-4 py-2.5 text-sm text-slate-900 ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-slate-900 transition-all"
+          />
+        </div>
+      </div>
+
+      <!-- Date Error Alert -->
+      <div
+        v-if="dateError"
+        class="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 flex items-center gap-2"
+      >
+        <svg
+          class="h-4 w-4 text-rose-500 shrink-0"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke-width="2"
+          stroke="currentColor"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0zm-9 3.75h.008v.008H12v-.008z"
+          />
+        </svg>
+        <span>{{ dateError }}</span>
+      </div>
+
+      <!-- Filter Controls Footer -->
+      <div
+        class="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4"
+      >
+        <p class="text-xs text-slate-500">
+          Showing
+          <span class="font-bold text-slate-900">{{
+            pagination.from || 0
+          }}</span>
+          -
+          <span class="font-bold text-slate-900">{{ pagination.to || 0 }}</span>
+          of
+          <span class="font-bold text-slate-900">{{
+            pagination.total || 0
+          }}</span>
+          orders
+        </p>
+
+        <div class="flex items-center gap-2">
           <select
-            v-model="selectedStatus"
-            @change="loadOrders"
-            class="w-full appearance-none rounded-xl border-0 py-2.5 pl-4 pr-10 text-sm text-slate-900 ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-slate-900 transition-all bg-white"
+            v-model="perPage"
+            @change="changePerPage"
+            class="rounded-lg border-0 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 ring-1 ring-inset ring-slate-300/80 focus:ring-2 focus:ring-slate-900 transition-all"
           >
-            <option value="">Status အားလုံး</option>
-            <option
-              v-for="status in statusList"
-              :key="status.value"
-              :value="status.value"
-            >
-              {{ status.label }}
-            </option>
+            <option :value="10">10 / page</option>
+            <option :value="15">15 / page</option>
+            <option :value="25">25 / page</option>
+            <option :value="50">50 / page</option>
           </select>
-          <div
-            class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3.5"
+
+          <button
+            type="button"
+            @click="clearFilters"
+            class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-all active:scale-[0.97]"
           >
-            <svg
-              class="h-4 w-4 text-slate-400"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke-width="2"
-              stroke="currentColor"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="m19.5 8.25-7.5 7.5-7.5-7.5"
-              />
-            </svg>
-          </div>
+            Clear Filters
+          </button>
         </div>
       </div>
     </div>
@@ -302,10 +557,10 @@ onBeforeUnmount(() => {
       <p class="mt-4 text-sm font-medium text-slate-500">Orders ဖတ်နေသည်...</p>
     </div>
 
-    <!-- Desktop Table -->
+    <!-- Desktop Table View -->
     <div
-      v-else-if="orders.length"
-      class="hidden lg:block overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5"
+      v-else-if="orders?.length"
+      class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5"
     >
       <div class="overflow-x-auto">
         <table
@@ -352,7 +607,7 @@ onBeforeUnmount(() => {
               :key="order.id"
               class="hover:bg-slate-50/60 transition-colors"
             >
-              <!-- Order -->
+              <!-- Order Number & Date -->
               <td class="whitespace-nowrap py-4 pl-6 pr-3">
                 <p class="font-bold text-slate-900 tracking-tight">
                   #{{ order.order_number }}
@@ -429,13 +684,13 @@ onBeforeUnmount(() => {
                 </div>
               </td>
 
-              <!-- Total -->
+              <!-- Grand Total -->
               <td class="whitespace-nowrap px-3 py-4 font-bold text-slate-900">
                 {{ Number(order.grand_total ?? 0).toLocaleString() }}
                 <span class="text-xs font-normal text-slate-500">MMK</span>
               </td>
 
-              <!-- Status -->
+              <!-- Status Badge -->
               <td class="whitespace-nowrap px-3 py-4">
                 <span
                   class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset"
@@ -445,7 +700,7 @@ onBeforeUnmount(() => {
                 </span>
               </td>
 
-              <!-- Action -->
+              <!-- Actions -->
               <td class="whitespace-nowrap py-4 pl-3 pr-6 text-right">
                 <div class="flex items-center justify-end gap-1.5">
                   <button
@@ -465,27 +720,26 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <!-- Mobile Cards -->
+    <!-- Mobile Card View -->
     <div v-else-if="orders?.length" class="space-y-4 lg:hidden">
       <div
         v-for="order in orders"
         :key="order.id"
         class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-900/5 transition-all"
       >
-        <!-- Header -->
+        <!-- Card Header -->
         <div
           class="flex items-start justify-between gap-4 pb-3 border-b border-slate-100"
         >
           <div>
             <span
-              class="text-xs font-semibold text-slate-400 uppercase tracking-wider"
+              class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider"
               >Order No</span
             >
             <p class="text-lg font-extrabold text-slate-900">
               #{{ order.order_number }}
             </p>
           </div>
-
           <span
             class="rounded-full px-3 py-1 text-xs font-semibold ring-1 ring-inset"
             :class="statusClass(order.status)"
@@ -494,7 +748,7 @@ onBeforeUnmount(() => {
           </span>
         </div>
 
-        <!-- Guest & Table Details -->
+        <!-- Guest & Table Info -->
         <div
           class="mt-4 grid grid-cols-2 gap-3 rounded-xl bg-slate-50/80 p-3.5"
         >
@@ -528,10 +782,10 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <!-- Items -->
+        <!-- Order Items -->
         <div class="mt-4 space-y-2">
           <p
-            class="text-xs font-semibold text-slate-400 uppercase tracking-wider"
+            class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider"
           >
             Items
           </p>
@@ -544,14 +798,13 @@ onBeforeUnmount(() => {
               <span class="font-bold text-slate-900">{{ item.quantity }}x</span>
               {{ item.menu_item_name }}
             </span>
-
             <span class="font-medium text-slate-900">
               {{ Number(item.subtotal ?? 0).toLocaleString() }}
             </span>
           </div>
         </div>
 
-        <!-- Total -->
+        <!-- Grand Total -->
         <div class="mt-4 border-t border-slate-100 pt-3">
           <div class="flex items-center justify-between">
             <span class="text-sm font-semibold text-slate-500"
@@ -564,7 +817,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <!-- Action Buttons -->
+        <!-- Mobile Action Buttons -->
         <div
           v-if="nextStatuses(order.status).length"
           class="mt-4 flex flex-wrap gap-2 pt-2 border-t border-slate-100"
@@ -582,9 +835,62 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <!-- Pagination Controls -->
+    <div
+      v-if="!loading && pagination.last_page > 1"
+      class="flex flex-col gap-3 rounded-2xl bg-white px-4 py-3.5 shadow-sm ring-1 ring-slate-900/5 sm:flex-row sm:items-center sm:justify-between"
+    >
+      <p class="text-xs text-slate-500">
+        Page
+        <span class="font-bold text-slate-900">{{
+          pagination.current_page
+        }}</span>
+        of
+        <span class="font-bold text-slate-900">{{ pagination.last_page }}</span>
+      </p>
+
+      <div class="flex items-center gap-1.5">
+        <!-- Prev Button -->
+        <button
+          type="button"
+          @click="goToPage(pagination.current_page - 1)"
+          :disabled="pagination.current_page <= 1"
+          class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 transition-all active:scale-[0.97]"
+        >
+          ← Prev
+        </button>
+
+        <!-- Page Numbers -->
+        <button
+          v-for="page in pageNumbers"
+          :key="page"
+          type="button"
+          @click="goToPage(page)"
+          :class="
+            page === pagination.current_page
+              ? 'bg-slate-900 text-white'
+              : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+          "
+          class="min-w-9 rounded-lg px-3 py-2 text-xs font-bold transition-all active:scale-[0.97]"
+        >
+          {{ page }}
+        </button>
+
+        <!-- Next Button -->
+        <button
+          type="button"
+          @click="goToPage(pagination.current_page + 1)"
+          :disabled="pagination.current_page >= pagination.last_page"
+          class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 transition-all active:scale-[0.97]"
+        >
+          Next →
+        </button>
+      </div>
+    </div>
+
     <!-- Empty State -->
     <div
-      v-else-if="!loading"
+      v-else-if="!loading && !orders.length"
       class="rounded-2xl border-2 border-dashed border-slate-200 bg-white p-12 text-center"
     >
       <div

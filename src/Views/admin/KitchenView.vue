@@ -14,6 +14,8 @@ const errorMessage = ref("");
 let channel = null;
 
 const pendingOrders = computed(() => {
+  console.log(orders.value, "this is order");
+
   return orders.value.filter((order) =>
     ["pending", "confirmed"].includes(order.status)
   );
@@ -32,8 +34,8 @@ const loadOrders = async () => {
 
   try {
     const response = await getKitchenOrders();
-
-    orders.value = response.data.data;
+    const data = response.data?.data;
+    orders.value = Array.isArray(data?.items) ? data.items : [];
   } catch (error) {
     errorMessage.value =
       error.response?.data?.message || "Kitchen orders ရယူ၍မရပါ။";
