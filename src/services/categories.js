@@ -27,6 +27,7 @@ export const createCategory =
                 '/categories',
                 data
             )
+        console.log();
 
         return response.data
     }
